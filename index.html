@@ -2,79 +2,93 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Neptune — Sauvegarde centrale (JsonStorage, fix PUT 404)</title>
+<title>Neptune — JsonStorage (fix: écriture URL courte ?apiKey=)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
   .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:980px;margin:0 auto}
-  .card-h{font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-  .small{font-size:12px;color:#555}.ok{color:#0a7d00}.err{color:#b00020}.muted{color:#777}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
-  input[type=text]{flex:1;min-width:340px;padding:8px}
+  input[type=text]{flex:1;min-width:360px;padding:8px}
   button{padding:8px 12px;font-size:14px}
   .ghost{background:#f7f7f7;border:1px solid #ddd}
-  .log{white-space:pre-wrap;margin-top:6px}
+  .log{white-space:pre-wrap;font-size:13px;margin-top:8px;color:#444}
+  .ok{color:#0a7d00}.err{color:#b00020}.muted{color:#666}
+  code{background:#f6f6f6;border-radius:6px;padding:2px 6px}
 </style>
 </head>
 <body>
   <h1>Neptune — Sauvegarde centrale (JsonStorage)</h1>
 
   <div class="card">
-    <div class="card-h">
-      <div>URI centrale (JsonStorage) & clé</div>
-      <div class="small">Ouvrez en <b>https</b> (GitHub Pages), pas en <code>file://</code>.</div>
+    <div class="row">
+      <input id="apiKey" type="text" placeholder="Clé API (Read + Modify requis)">
+      <button id="btnCreate" class="ghost" type="button">Créer item</button>
+    </div>
+    <div class="row">
+      <input id="uri" type="text" placeholder="URI JsonStorage (longue ou courte)">
+      <button id="btnUse" class="ghost" type="button">Utiliser cette URI</button>
     </div>
 
     <div class="row">
-      <input id="uri" type="text" placeholder="Ex: https://api.jsonstorage.net/v1/json/USER/ITEM">
-    </div>
-    <div class="row">
-      <input id="apiKey" type="text" placeholder="Clé API (droits écriture)" value="0a3d2cd2-f626-4b0d-8817-0d3d1b40db92">
-      <button id="btnCreate" class="ghost small" type="button">Créer (JsonStorage)</button>
-    </div>
-
-    <div class="row">
-      <button id="btnTest" class="ghost" type="button">Tester accès (GET)</button>
+      <button id="btnTest" class="ghost" type="button">Tester GET</button>
       <button id="btnPull" class="ghost" type="button">← Charger</button>
       <button id="btnPush" type="button">Enregistrer →</button>
     </div>
 
-    <div id="status" class="small muted log">—</div>
-    <div id="lastErr" class="small err log" style="display:none"></div>
+    <div class="log muted">
+      Lecture (GET) sur : <code id="readUri">—</code><br>
+      Écriture (PUT) sur : <code id="writeUri">—</code>
+    </div>
+    <div id="status" class="log muted">—</div>
+    <div id="err" class="log err" style="display:none"></div>
   </div>
 
 <script>
 (function(){"use strict";
-  const $ = (s)=>document.querySelector(s);
-  const status = (m, cls="")=>{ const el=$("#status"); el.textContent = m + " ("+new Date().toLocaleTimeString()+")"; el.className = "small log " + (cls||"muted"); console.log("[central]", m); }
-  const showErr = (e)=>{ const el=$("#lastErr"); el.style.display="block"; el.textContent = e; }
-  const clrErr  = ()=>{ const el=$("#lastErr"); el.style.display="none"; el.textContent=""; }
+  const $=(s)=>document.querySelector(s);
+  const S=(m,c="muted")=>{ const el=$("#status"); el.textContent=m+" ("+new Date().toLocaleTimeString()+")"; el.className="log "+c; console.log("[jsonstorage]",m); }
+  const E=(m)=>{ const el=$("#err"); el.style.display="block"; el.textContent=m; }
+  const CE=()=>{ const el=$("#err"); el.style.display="none"; el.textContent=""; }
 
-  function getUri(){ return ($("#uri").value||"").trim(); }
-  function getKey(){ return ($("#apiKey").value||"").trim(); }
-  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
+  function val(id){ return ($(id).value||"").trim(); }
+  function setText(id, t){ $(id).textContent = t || "—"; }
 
-  // Détecte /v1/json/<userId>/<itemId> → renvoie {readUri, writeUri, itemId}
-  function normalizeJsonStorage(u){
-    // format long
+  // Normalise l'URI : /v1/json/<user>/<item> -> read=original, write=/v1/json/<item>
+  function normalize(u){
     let m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/]+)\/([^\/\?]+)(.*)?$/i);
-    if(m){
-      const itemId = m[2];
-      const readUri = u; // on garde la lecture sur l’URL fournie
-      const writeUri = "https://api.jsonstorage.net/v1/json/" + itemId; // format court pour l’écriture
-      return { itemId, readUri, writeUri };
-    }
-    // format court déjà
+    if(m){ return { itemId:m[2], readUri:u, writeUri:`https://api.jsonstorage.net/v1/json/${m[2]}` }; }
     m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/\?]+)(.*)?$/i);
-    if(m){
-      const itemId = m[1];
-      const base = "https://api.jsonstorage.net/v1/json/" + itemId;
-      return { itemId, readUri: base, writeUri: base };
-    }
-    throw new Error("URI JsonStorage invalide.");
+    if(m){ return { itemId:m[1], readUri:`https://api.jsonstorage.net/v1/json/${m[1]}`, writeUri:`https://api.jsonstorage.net/v1/json/${m[1]}` }; }
+    throw new Error("URI JsonStorage invalide");
   }
 
-  function ensureAppData(){
+  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
+
+  async function jsPostCreate(key){
+    const url = "https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key);
+    const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
+    const txt = await r.text(); let j=null; try{ j = JSON.parse(txt);}catch(_){}
+    if(!r.ok) throw new Error("POST "+r.status+" — "+txt.slice(0,200));
+    if(!j || !j.uri) throw new Error("Réponse inattendue : "+txt.slice(0,200));
+    return j.uri; // souvent /userId/itemId
+  }
+
+  async function jsGET(uri,key){
+    const r = await fetch(withKey(uri,key), {method:"GET", cache:"no-cache", mode:"cors"});
+    const t = await r.text();
+    if(!r.ok) throw new Error("GET "+r.status+" — "+t.slice(0,200));
+    return JSON.parse(t || "{}");
+  }
+
+  async function jsPUT(writeUri, key, body){
+    // LA SEULE MÉTHODE QUI MARCHE PARTOUT : PUT SUR L'URL COURTE + ?apiKey
+    const r = await fetch(withKey(writeUri, key), {method:"PUT", headers:{"Content-Type":"application/json"}, body, mode:"cors", cache:"no-store"});
+    const t = await r.text();
+    if(!r.ok) throw new Error("PUT "+r.status+" — "+t.slice(0,200));
+    return t;
+  }
+
+  function ensureData(){
     if(typeof window.save==="function"){ try{ window.save(); }catch(e){} }
     if(!window.data || typeof window.data!=="object") window.data = {};
     if(!window.data.__meta) window.data.__meta = {};
@@ -82,103 +96,72 @@
     return window.data;
   }
 
-  async function jsGET(u, key){
-    const r = await fetch(withKey(u, key), {method:"GET", cache:"no-cache", mode:"cors"});
-    const t = await r.text();
-    if(!r.ok) throw new Error("GET "+r.status+" — "+t.slice(0,200));
-    return JSON.parse(t || "{}");
-  }
-
-  async function jsPUT_all(uWrite, key, bodyStr){
-    const tries = [
-      {label:"PUT ?apiKey", url: withKey(uWrite,key), headers: {"Content-Type":"application/json"}},
-      {label:"PUT header apiKey", url: uWrite, headers: {"Content-Type":"application/json","apiKey":key}},
-      {label:"PUT Authorization", url: uWrite, headers: {"Content-Type":"application/json","Authorization":"Bearer "+key}},
-      {label:"PATCH ?apiKey", url: withKey(uWrite,key), headers: {"Content-Type":"application/json"}, method:"PATCH"},
-      {label:"PATCH header apiKey", url: uWrite, headers: {"Content-Type":"application/json","apiKey":key}, method:"PATCH"},
-      {label:"PATCH Authorization", url: uWrite, headers: {"Content-Type":"application/json","Authorization":"Bearer "+key}, method:"PATCH"},
-    ];
-    let last = null;
-    for(const t of tries){
-      const method = t.method || "PUT";
-      status(`Écriture ${t.label}…`);
-      const r = await fetch(t.url, {method, headers:t.headers, body: bodyStr, mode:"cors", cache:"no-store"});
-      const txt = await r.text().catch(()=>"" );
-      if(r.ok) return {code:r.status, text:txt};
-      showErr(`${t.label} → HTTP ${r.status} — ${txt.slice(0,200)}`);
-      last = {code:r.status, text:txt};
+  function updateUris(){
+    CE();
+    try{
+      const u = val("#uri");
+      const {readUri, writeUri} = normalize(u);
+      setText("#readUri", readUri);
+      setText("#writeUri", writeUri + "?apiKey=…");
+    }catch(e){
+      setText("#readUri", "—");
+      setText("#writeUri", "—");
     }
-    throw new Error("Dernière tentative → HTTP "+(last?last.code:"?")+" — "+(last?last.text:""));
   }
 
-  // --- Actions ---
-  async function doCreate(){
-    clrErr();
-    const key = getKey();
-    if(!key) return status("Renseigne la clé API (droits écriture)", "err");
-    try{
-      status("Création (JsonStorage)…");
-      const r = await fetch("https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key), {
-        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})
-      });
-      const t = await r.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
-      if(!r.ok) throw new Error("POST "+r.status+" — "+t.slice(0,200));
-      if(!j || !j.uri) throw new Error("Réponse inattendue : "+t.slice(0,200));
-      $("#uri").value = j.uri; // souvent en /userId/itemId
-      status("Central créé. Teste puis Enregistrer →", "ok");
-    }catch(e){ status("Échec création — "+(e.message||e), "err"); }
-  }
+  $("#btnUse").onclick = ()=>{ updateUris(); S("URI définie — prêt"); };
+  $("#uri").addEventListener("input", updateUris);
 
-  async function doTest(){
-    clrErr();
+  $("#btnCreate").onclick = async ()=>{
+    CE();
+    const key = val("#apiKey"); if(!key) return S("Renseigne la clé avec droits Read + Modify","err");
     try{
-      const key = getKey();
-      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
-      const {readUri} = normalizeJsonStorage(u);
-      status("Test (GET)…");
-      const r = await fetch(withKey(readUri, key), {method:"GET", cache:"no-cache", mode:"cors"});
-      const t = await r.text();
-      status("Test "+r.status+(r.ok?" OK":" — "+t.slice(0,120)), r.ok?"ok":"err");
-    }catch(e){ status("Test — "+(e.message||e), "err"); }
-  }
+      S("Création en cours…");
+      const longUri = await jsPostCreate(key); // /userId/itemId
+      $("#uri").value = longUri;
+      updateUris();
+      S("Item créé. Teste ou enregistre.","ok");
+    }catch(e){ S("Échec création — "+(e.message||e),"err"); }
+  };
 
-  async function doPull(){
-    clrErr();
+  $("#btnTest").onclick = async ()=>{
+    CE();
+    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
     try{
-      const key = getKey();
-      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
-      const {readUri} = normalizeJsonStorage(u);
-      status("Lecture…");
-      const data = await jsGET(readUri, key);
-      window.data = data;
+      const {readUri} = normalize(u);
+      S("GET…");
+      const j = await jsGET(readUri, key);
+      S("GET 200 OK — taille: "+JSON.stringify(j).length+" octets","ok");
+    }catch(e){ S("Test GET — "+(e.message||e),"err"); }
+  };
+
+  $("#btnPull").onclick = async ()=>{
+    CE();
+    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
+    try{
+      const {readUri} = normalize(u);
+      S("Lecture…");
+      const j = await jsGET(readUri, key);
+      window.data = j;
       try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_){}
-      status("Chargé", "ok");
-    }catch(e){ status("Échec lecture — "+(e.message||e), "err"); }
-  }
+      S("Chargé","ok");
+    }catch(e){ S("Échec lecture — "+(e.message||e),"err"); }
+  };
 
-  async function doPush(){
-    clrErr();
-    if(location.protocol==="file:") return status("Ouvrez en https (GitHub Pages)", "err");
+  $("#btnPush").onclick = async ()=>{
+    CE();
+    if(location.protocol==="file:") return S("Ouvrez la page en https (GitHub Pages)","err");
+    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
     try{
-      const key = getKey();
-      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
-      const {writeUri} = normalizeJsonStorage(u); // << clé : on ÉCRIT sur /v1/json/<itemId>
-      status("Préparation…");
-      const d = ensureAppData();
-      const body = JSON.stringify(d);
-      const res = await jsPUT_all(writeUri, key, body);
-      status("Enregistré ✅ — HTTP "+res.code, "ok");
-    }catch(e){ status("Échec écriture — "+(e.message||e), "err"); }
-  }
+      const {writeUri} = normalize(u); // <= ÉCRITURE SUR L'URL COURTE
+      const body = JSON.stringify(ensureData());
+      S("Écriture…");
+      await jsPUT(writeUri, key, body);
+      S("Enregistré ✅","ok");
+    }catch(e){ S("Échec écriture — "+(e.message||e),"err"); }
+  };
 
-  // Bind
-  $("#btnCreate").onclick = doCreate;
-  $("#btnTest").onclick   = doTest;
-  $("#btnPull").onclick   = doPull;
-  $("#btnPush").onclick   = doPush;
-
-  // Astuce: si tu veux préremplir automatiquement:
-  // $("#uri").value = "https://api.jsonstorage.net/v1/json/USER/ITEM";
+  // Astuce : colle d'abord l'URI longue, clique "Utiliser cette URI" -> tu verras l'URL courte calculée pour l'écriture
 })();
 </script>
 </body>
