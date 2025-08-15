@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Neptune — Sauvegarde JSON central (setup inclus)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
+  .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:980px;margin:0 auto}
+  .card-h{font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .small{font-size:12px;color:#555}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  button{padding:8px 12px;font-size:14px}
+  .ghost{background:#f7f7f7;border:1px solid #ddd}
+  code{background:#f6f6f6;padding:2px 6px;border-radius:6px}
+  .ok{color:#0a7d00} .err{color:#b00020} .muted{color:#777}
+</style>
+</head>
+<body>
+  <h1>Neptune — Sauvegarde JSON central</h1>
+  <div class="card">
+    <div class="card-h">
+      <div>JSON central : <span id="uriView" class="small muted">(baked)</span></div>
+      <div class="small">Ouvrez en <b>https</b> (GitHub Pages). Évitez <code>file://</code>.</div>
+    </div>
+    <div class="controls">
+      <button id="btnPull" class="ghost" type="button">← Charger</button>
+      <button id="btnPush" type="button">Enregistrer →</button>
+      <button id="btnTest" class="ghost small" type="button">Tester accès</button>
+      <button id="btnCreate" class="ghost small" type="button" style="display:none">Créer un nouveau central</button>
+      <button id="btnCopy" class="ghost small" type="button" style="display:none">Copier l'URI</button>
+    </div>
+    <div id="status" class="small muted" style="margin-top:8px">—</div>
+  </div>
+
+<script>
+(function(){"use strict";
+  const BAKED_URI = 'https://api.jsonstorage.net/v1/json/88ff1334-435e-4e42-bcf4-65ee4777fa1f/f34e9f5e-ac59-4c7c-a5c5-712c3ff1452c';
+  const API_KEY   = '0a3d2cd2-f626-4b0d-8817-0d3d1b40db92';
+
+  let centralUri = BAKED_URI;
+
+  const $ = (s)=>document.querySelector(s);
+  const status = (m, cls="")=>{ const el=$("#status"); el.textContent = m + " ("+new Date().toLocaleTimeString()+")"; el.className = "small " + (cls||""); console.log("[central]", m); }
+  function showUri(){ $("#uriView").textContent = centralUri; }
+  function withKey(u){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(API_KEY); }
+
+  function ensureAppData(){ if(typeof window.save==="function") try{window.save();}catch(e){} if(!window.data||typeof window.data!=="object") window.data={}; return window.data; }
+
+  async function centralGET(){ const r=await fetch(withKey(centralUri), {method:"GET", cache:"no-cache"}); if(!r.ok) throw new Error("GET "+r.status+" — "+(await r.text().catch(()=>"" )).slice(0,200)); return r.json(); }
+  async function centralPUT(obj){ const body=JSON.stringify(obj); const r=await fetch(withKey(centralUri), {method:"PUT", headers:{"Content-Type":"application/json"}, body}); if(!r.ok) throw new Error("PUT "+r.status+" — "+(await r.text().catch(()=>"" )).slice(0,200)); return r.json().catch(()=>null); }
+  async function centralPOSTcreate(){ const url='https://api.jsonstorage.net/v1/json?apiKey='+encodeURIComponent(API_KEY); const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})}); if(!r.ok) throw new Error("POST "+r.status+" — "+(await r.text().catch(()=>"" )).slice(0,200)); const j=await r.json(); if(!j.uri) throw new Error("Réponse inattendue"); return j.uri; }
+
+  async function testAccess(){ try{ const r=await fetch(withKey(centralUri),{method:"GET",cache:"no-cache"}); if(r.status===404){ status("404 — central introuvable. Cliquez 'Créer un nouveau central'.","err"); $("#btnCreate").style.display="inline-block"; } else status("Test "+r.status+(r.ok?" OK":""), r.ok?"ok":"err"); }catch(e){ status("Test — "+(e.message||e),"err"); } }
+
+  async function pullNow(){ try{ status("Lecture…"); const j=await centralGET(); window.data=j; try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_ ){} status("Chargé"); }catch(e){ status("Échec lecture — "+(e.message||e),"err"); if(/GET 404/.test(e.message||"")) $("#btnCreate").style.display="inline-block"; } }
+
+  async function pushNow(){ if(location.protocol==="file:") return status("Ouvrez en https (GitHub Pages)","err");
+    try{ status("Préparation…"); const d=ensureAppData(); if(!d.__meta) d.__meta={}; d.__meta.updatedAt=new Date().toISOString();
+      status("Écriture…"); await centralPUT(d); status("Enregistré ✅","ok"); }
+    catch(e){ status("Échec écriture — "+(e.message||e),"err"); if(/PUT 404/.test(e.message||"")) $("#btnCreate").style.display="inline-block"; }
+  }
+
+  async function createCentral(){ try{ status("Création du central…"); const newUri=await centralPOSTcreate(); centralUri=newUri; showUri(); $("#btnCopy").style.display="inline-block"; status("Nouveau central prêt. Cliquez 'Enregistrer →' puis remonte-moi l'URI pour la graver.","ok"); }catch(e){ status("Échec création — "+(e.message||e),"err"); } }
+
+  function copyUri(){ try{ navigator.clipboard.writeText(centralUri); status("URI copiée. Envoie-la moi pour la graver dans le fichier.","ok"); }catch(e){ status("Copie impossible — "+(e.message||e),"err"); } }
+
+  document.addEventListener("DOMContentLoaded", ()=>{ showUri(); $("#btnPull").onclick=pullNow; $("#btnPush").onclick=pushNow; $("#btnTest").onclick=testAccess; $("#btnCreate").onclick=createCentral; $("#btnCopy").onclick=copyUri; });
+})();
+</script>
+
+</body></html>
