@@ -2,48 +2,41 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Neptune — Sauvegarde centrale (JSONBlob uniquement)</title>
+<title>Neptune — Sauvegarde centrale (JsonStorage, fix PUT 404)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
   .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:980px;margin:0 auto}
   .card-h{font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .small{font-size:12px;color:#555}.ok{color:#0a7d00}.err{color:#b00020}.muted{color:#777}
-  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   input[type=text]{flex:1;min-width:340px;padding:8px}
   button{padding:8px 12px;font-size:14px}
   .ghost{background:#f7f7f7;border:1px solid #ddd}
-  code{background:#f6f6f6;padding:2px 6px;border-radius:6px}
   .log{white-space:pre-wrap;margin-top:6px}
 </style>
 </head>
 <body>
-  <h1>Neptune — Sauvegarde centrale (JSONBlob)</h1>
+  <h1>Neptune — Sauvegarde centrale (JsonStorage)</h1>
 
   <div class="card">
     <div class="card-h">
-      <div>URI centrale : <code id="uriView" class="muted">(aucune)</code></div>
-      <div class="small">Ouvrez en <b>https</b> (GitHub Pages). Pas en <code>file://</code>.</div>
+      <div>URI centrale (JsonStorage) & clé</div>
+      <div class="small">Ouvrez en <b>https</b> (GitHub Pages), pas en <code>file://</code>.</div>
     </div>
 
     <div class="row">
-      <input id="uri" type="text" placeholder="Ex: https://jsonblob.com/api/json/1234567890">
-      <button id="btnUseUri" class="ghost small" type="button">Utiliser cette URI</button>
+      <input id="uri" type="text" placeholder="Ex: https://api.jsonstorage.net/v1/json/USER/ITEM">
+    </div>
+    <div class="row">
+      <input id="apiKey" type="text" placeholder="Clé API (droits écriture)" value="0a3d2cd2-f626-4b0d-8817-0d3d1b40db92">
+      <button id="btnCreate" class="ghost small" type="button">Créer (JsonStorage)</button>
     </div>
 
-    <div class="controls">
-      <button id="btnCreate" class="ghost small" type="button">Créer central (JSONBlob)</button>
-      <button id="btnCopyUri" class="ghost small" type="button">Copier l’URI</button>
-      <button id="btnCopyShare" class="ghost small" type="button">Copier le lien partage (?central=…)</button>
-    </div>
-
-    <hr style="margin:12px 0">
-
-    <div class="controls">
+    <div class="row">
+      <button id="btnTest" class="ghost" type="button">Tester accès (GET)</button>
       <button id="btnPull" class="ghost" type="button">← Charger</button>
       <button id="btnPush" type="button">Enregistrer →</button>
-      <button id="btnTest" class="ghost small" type="button">Tester accès</button>
     </div>
 
     <div id="status" class="small muted log">—</div>
@@ -57,11 +50,29 @@
   const showErr = (e)=>{ const el=$("#lastErr"); el.style.display="block"; el.textContent = e; }
   const clrErr  = ()=>{ const el=$("#lastErr"); el.style.display="none"; el.textContent=""; }
 
-  const JB_RE = /^https:\/\/jsonblob\.com\/api\/json\/[0-9A-Za-z-_.]+(?:\/.*)?$/;
-
   function getUri(){ return ($("#uri").value||"").trim(); }
-  function setUri(u){ $("#uri").value = u||""; showUri(); }
-  function showUri(){ $("#uriView").textContent = getUri() || "(aucune)"; }
+  function getKey(){ return ($("#apiKey").value||"").trim(); }
+  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
+
+  // Détecte /v1/json/<userId>/<itemId> → renvoie {readUri, writeUri, itemId}
+  function normalizeJsonStorage(u){
+    // format long
+    let m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/]+)\/([^\/\?]+)(.*)?$/i);
+    if(m){
+      const itemId = m[2];
+      const readUri = u; // on garde la lecture sur l’URL fournie
+      const writeUri = "https://api.jsonstorage.net/v1/json/" + itemId; // format court pour l’écriture
+      return { itemId, readUri, writeUri };
+    }
+    // format court déjà
+    m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/\?]+)(.*)?$/i);
+    if(m){
+      const itemId = m[1];
+      const base = "https://api.jsonstorage.net/v1/json/" + itemId;
+      return { itemId, readUri: base, writeUri: base };
+    }
+    throw new Error("URI JsonStorage invalide.");
+  }
 
   function ensureAppData(){
     if(typeof window.save==="function"){ try{ window.save(); }catch(e){} }
@@ -71,104 +82,103 @@
     return window.data;
   }
 
-  // Empêche d'utiliser JsonStorage par erreur
-  function assertJsonBlob(u){
-    if(!JB_RE.test(u)){
-      throw new Error("URI non valide JSONBlob (doit commencer par https://jsonblob.com/api/json/...)");
-    }
+  async function jsGET(u, key){
+    const r = await fetch(withKey(u, key), {method:"GET", cache:"no-cache", mode:"cors"});
+    const t = await r.text();
+    if(!r.ok) throw new Error("GET "+r.status+" — "+t.slice(0,200));
+    return JSON.parse(t || "{}");
   }
 
-  async function createCentral(){
+  async function jsPUT_all(uWrite, key, bodyStr){
+    const tries = [
+      {label:"PUT ?apiKey", url: withKey(uWrite,key), headers: {"Content-Type":"application/json"}},
+      {label:"PUT header apiKey", url: uWrite, headers: {"Content-Type":"application/json","apiKey":key}},
+      {label:"PUT Authorization", url: uWrite, headers: {"Content-Type":"application/json","Authorization":"Bearer "+key}},
+      {label:"PATCH ?apiKey", url: withKey(uWrite,key), headers: {"Content-Type":"application/json"}, method:"PATCH"},
+      {label:"PATCH header apiKey", url: uWrite, headers: {"Content-Type":"application/json","apiKey":key}, method:"PATCH"},
+      {label:"PATCH Authorization", url: uWrite, headers: {"Content-Type":"application/json","Authorization":"Bearer "+key}, method:"PATCH"},
+    ];
+    let last = null;
+    for(const t of tries){
+      const method = t.method || "PUT";
+      status(`Écriture ${t.label}…`);
+      const r = await fetch(t.url, {method, headers:t.headers, body: bodyStr, mode:"cors", cache:"no-store"});
+      const txt = await r.text().catch(()=>"" );
+      if(r.ok) return {code:r.status, text:txt};
+      showErr(`${t.label} → HTTP ${r.status} — ${txt.slice(0,200)}`);
+      last = {code:r.status, text:txt};
+    }
+    throw new Error("Dernière tentative → HTTP "+(last?last.code:"?")+" — "+(last?last.text:""));
+  }
+
+  // --- Actions ---
+  async function doCreate(){
     clrErr();
+    const key = getKey();
+    if(!key) return status("Renseigne la clé API (droits écriture)", "err");
     try{
-      status("Création (JSONBlob)…");
-      const r = await fetch("https://jsonblob.com/api/json", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({})
+      status("Création (JsonStorage)…");
+      const r = await fetch("https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key), {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})
       });
-      const loc = r.headers.get("Location");
-      const t = await r.text();
+      const t = await r.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
       if(!r.ok) throw new Error("POST "+r.status+" — "+t.slice(0,200));
-      if(!loc) throw new Error("Pas d’en-tête Location");
-      setUri(loc);
-      status("Central créé (JSONBlob). Clique Enregistrer →", "ok");
+      if(!j || !j.uri) throw new Error("Réponse inattendue : "+t.slice(0,200));
+      $("#uri").value = j.uri; // souvent en /userId/itemId
+      status("Central créé. Teste puis Enregistrer →", "ok");
     }catch(e){ status("Échec création — "+(e.message||e), "err"); }
   }
 
-  async function testAccess(){
+  async function doTest(){
     clrErr();
-    const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
     try{
-      assertJsonBlob(u);
-      status("Test accès…");
-      const r = await fetch(u, {method:"GET", cache:"no-cache"});
+      const key = getKey();
+      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
+      const {readUri} = normalizeJsonStorage(u);
+      status("Test (GET)…");
+      const r = await fetch(withKey(readUri, key), {method:"GET", cache:"no-cache", mode:"cors"});
       const t = await r.text();
       status("Test "+r.status+(r.ok?" OK":" — "+t.slice(0,120)), r.ok?"ok":"err");
     }catch(e){ status("Test — "+(e.message||e), "err"); }
   }
 
-  async function pullNow(){
+  async function doPull(){
     clrErr();
-    const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
     try{
-      assertJsonBlob(u);
+      const key = getKey();
+      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
+      const {readUri} = normalizeJsonStorage(u);
       status("Lecture…");
-      const r = await fetch(u, {method:"GET", cache:"no-cache"});
-      if(!r.ok){ const t=await r.text(); throw new Error("GET "+r.status+" — "+t.slice(0,200)); }
-      window.data = await r.json();
+      const data = await jsGET(readUri, key);
+      window.data = data;
       try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_){}
       status("Chargé", "ok");
     }catch(e){ status("Échec lecture — "+(e.message||e), "err"); }
   }
 
-  async function pushNow(){
+  async function doPush(){
     clrErr();
     if(location.protocol==="file:") return status("Ouvrez en https (GitHub Pages)", "err");
-    const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
     try{
-      assertJsonBlob(u);
+      const key = getKey();
+      const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
+      const {writeUri} = normalizeJsonStorage(u); // << clé : on ÉCRIT sur /v1/json/<itemId>
       status("Préparation…");
       const d = ensureAppData();
       const body = JSON.stringify(d);
-      status("Écriture (JSONBlob)…");
-      const r = await fetch(u, {method:"PUT", headers:{"Content-Type":"application/json"}, body});
-      const t = await r.text();
-      if(!r.ok) throw new Error("PUT "+r.status+" — "+t.slice(0,200));
-      status("Enregistré ✅ — HTTP "+r.status, "ok");
+      const res = await jsPUT_all(writeUri, key, body);
+      status("Enregistré ✅ — HTTP "+res.code, "ok");
     }catch(e){ status("Échec écriture — "+(e.message||e), "err"); }
   }
 
-  // Partage : lien avec ?central=...
-  function copyUri(){ try{ navigator.clipboard.writeText(getUri()); status("URI copiée", "ok"); }catch(e){ status("Copie impossible — "+(e.message||e),"err"); } }
-  function copyShare(){
-    const u = getUri(); if(!u) return status("Renseigne l’URI d’abord", "err");
-    try{
-      assertJsonBlob(u);
-      const share = location.origin + location.pathname + "?central=" + encodeURIComponent(u);
-      navigator.clipboard.writeText(share);
-      status("Lien de partage copié (ouvre-le sur un autre PC)", "ok");
-    }catch(e){ status("Copie impossible — "+(e.message||e), "err"); }
-  }
-  function useUri(){ setUri(getUri()); status("URI définie — prêt", "ok"); }
+  // Bind
+  $("#btnCreate").onclick = doCreate;
+  $("#btnTest").onclick   = doTest;
+  $("#btnPull").onclick   = doPull;
+  $("#btnPush").onclick   = doPush;
 
-  // Init depuis ?central=...
-  (function initFromQuery(){
-    try{
-      const p = new URLSearchParams(location.search);
-      const central = p.get("central");
-      if(central){ setUri(central); status("URI chargée depuis l’URL — prêt", "ok"); }
-    }catch(e){}
-  })();
-
-  // Bind UI
-  $("#btnCreate").onclick   = createCentral;
-  $("#btnCopyUri").onclick  = copyUri;
-  $("#btnCopyShare").onclick= copyShare;
-  $("#btnUseUri").onclick   = useUri;
-  $("#btnTest").onclick     = testAccess;
-  $("#btnPull").onclick     = pullNow;
-  $("#btnPush").onclick     = pushNow;
+  // Astuce: si tu veux préremplir automatiquement:
+  // $("#uri").value = "https://api.jsonstorage.net/v1/json/USER/ITEM";
 })();
 </script>
 </body>
