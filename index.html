@@ -2,11 +2,11 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Neptune — JsonStorage (fix: écriture URL courte ?apiKey=)</title>
+<title>Neptune — JsonStorage (clé OK + écriture URL courte)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
-  .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:980px;margin:0 auto}
+  .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:960px;margin:0 auto}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   input[type=text]{flex:1;min-width:360px;padding:8px}
   button{padding:8px 12px;font-size:14px}
@@ -21,18 +21,19 @@
 
   <div class="card">
     <div class="row">
-      <input id="apiKey" type="text" placeholder="Clé API (Read + Modify requis)">
-      <button id="btnCreate" class="ghost" type="button">Créer item</button>
+      <input id="apiKey" type="text" placeholder="Clé API (Read + Modify = YES)" value="1c5f1698-c8f7-4992-988a-d1ae29cb35ee">
+      <button id="btnCreate" class="ghost" type="button">Créer un item (POST)</button>
     </div>
+
     <div class="row">
-      <input id="uri" type="text" placeholder="URI JsonStorage (longue ou courte)">
+      <input id="uri" type="text" placeholder="URI JsonStorage (longue ou courte). Ex: https://api.jsonstorage.net/v1/json/USER/ITEM">
       <button id="btnUse" class="ghost" type="button">Utiliser cette URI</button>
     </div>
 
     <div class="row">
       <button id="btnTest" class="ghost" type="button">Tester GET</button>
-      <button id="btnPull" class="ghost" type="button">← Charger</button>
       <button id="btnPush" type="button">Enregistrer →</button>
+      <button id="btnPull" class="ghost" type="button">← Charger</button>
     </div>
 
     <div class="log muted">
@@ -50,10 +51,11 @@
   const E=(m)=>{ const el=$("#err"); el.style.display="block"; el.textContent=m; }
   const CE=()=>{ const el=$("#err"); el.style.display="none"; el.textContent=""; }
 
-  function val(id){ return ($(id).value||"").trim(); }
-  function setText(id, t){ $(id).textContent = t || "—"; }
+  function v(id){ return ($(id).value||"").trim(); }
+  function setText(id,t){ $(id).textContent=t||"—"; }
+  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
 
-  // Normalise l'URI : /v1/json/<user>/<item> -> read=original, write=/v1/json/<item>
+  // Normalise l'URI : /v1/json/USER/ITEM -> read = originale (pour GET), write = /v1/json/ITEM (pour PUT)
   function normalize(u){
     let m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/]+)\/([^\/\?]+)(.*)?$/i);
     if(m){ return { itemId:m[2], readUri:u, writeUri:`https://api.jsonstorage.net/v1/json/${m[2]}` }; }
@@ -62,15 +64,22 @@
     throw new Error("URI JsonStorage invalide");
   }
 
-  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
+  function updateUris(){
+    CE();
+    try{
+      const u=v("#uri"); const {readUri,writeUri}=normalize(u);
+      setText("#readUri", readUri);
+      setText("#writeUri", writeUri+"?apiKey=…");
+    }catch(e){ setText("#readUri","—"); setText("#writeUri","—"); }
+  }
 
-  async function jsPostCreate(key){
-    const url = "https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key);
-    const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({})});
-    const txt = await r.text(); let j=null; try{ j = JSON.parse(txt);}catch(_){}
+  async function jsPOSTcreate(key){
+    const url="https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key);
+    const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
+    const txt = await r.text(); let j=null; try{ j=JSON.parse(txt);}catch(_){}
     if(!r.ok) throw new Error("POST "+r.status+" — "+txt.slice(0,200));
     if(!j || !j.uri) throw new Error("Réponse inattendue : "+txt.slice(0,200));
-    return j.uri; // souvent /userId/itemId
+    return j.uri; // souvent /v1/json/USER/ITEM
   }
 
   async function jsGET(uri,key){
@@ -80,9 +89,9 @@
     return JSON.parse(t || "{}");
   }
 
-  async function jsPUT(writeUri, key, body){
-    // LA SEULE MÉTHODE QUI MARCHE PARTOUT : PUT SUR L'URL COURTE + ?apiKey
-    const r = await fetch(withKey(writeUri, key), {method:"PUT", headers:{"Content-Type":"application/json"}, body, mode:"cors", cache:"no-store"});
+  async function jsPUT(writeUri,key,bodyStr){
+    // Seule méthode supportée partout : PUT sur l'URL COURTE + ?apiKey
+    const r = await fetch(withKey(writeUri,key), {method:"PUT", headers:{"Content-Type":"application/json"}, body: bodyStr, mode:"cors", cache:"no-store"});
     const t = await r.text();
     if(!r.ok) throw new Error("PUT "+r.status+" — "+t.slice(0,200));
     return t;
@@ -90,78 +99,79 @@
 
   function ensureData(){
     if(typeof window.save==="function"){ try{ window.save(); }catch(e){} }
-    if(!window.data || typeof window.data!=="object") window.data = {};
-    if(!window.data.__meta) window.data.__meta = {};
-    window.data.__meta.updatedAt = new Date().toISOString();
+    if(!window.data || typeof window.data!=="object") window.data={};
+    if(!window.data.__meta) window.data.__meta={};
+    window.data.__meta.updatedAt=new Date().toISOString();
     return window.data;
   }
 
-  function updateUris(){
-    CE();
-    try{
-      const u = val("#uri");
-      const {readUri, writeUri} = normalize(u);
-      setText("#readUri", readUri);
-      setText("#writeUri", writeUri + "?apiKey=…");
-    }catch(e){
-      setText("#readUri", "—");
-      setText("#writeUri", "—");
-    }
-  }
-
+  // UI
   $("#btnUse").onclick = ()=>{ updateUris(); S("URI définie — prêt"); };
   $("#uri").addEventListener("input", updateUris);
 
   $("#btnCreate").onclick = async ()=>{
     CE();
-    const key = val("#apiKey"); if(!key) return S("Renseigne la clé avec droits Read + Modify","err");
+    const key=v("#apiKey"); if(!key) return S("Renseigne la clé (Read + Modify = YES)","err");
     try{
-      S("Création en cours…");
-      const longUri = await jsPostCreate(key); // /userId/itemId
+      S("Création (POST)…");
+      const longUri = await jsPOSTcreate(key);
       $("#uri").value = longUri;
       updateUris();
-      S("Item créé. Teste ou enregistre.","ok");
+      S("Item créé. Teste puis Enregistrer.","ok");
     }catch(e){ S("Échec création — "+(e.message||e),"err"); }
   };
 
   $("#btnTest").onclick = async ()=>{
     CE();
-    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
+    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
     try{
       const {readUri} = normalize(u);
-      S("GET…");
-      const j = await jsGET(readUri, key);
-      S("GET 200 OK — taille: "+JSON.stringify(j).length+" octets","ok");
+      S("GET…"); await jsGET(readUri,key);
+      S("GET 200 OK","ok");
     }catch(e){ S("Test GET — "+(e.message||e),"err"); }
+  };
+
+  $("#btnPush").onclick = async ()=>{
+    CE();
+    if(location.protocol==="file:") return S("Ouvre en https (GitHub Pages)","err");
+    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
+    try{
+      let {writeUri} = normalize(u);
+      const body = JSON.stringify(ensureData());
+      S("PUT sur l'URL courte…");
+      try{
+        await jsPUT(writeUri, key, body);
+        S("Enregistré ✅","ok"); return;
+      }catch(e1){
+        // Si 404: l'item n'existe pas (ou appartient à une autre clé) → on crée puis on réessaye
+        if(String(e1).includes("PUT 404")){
+          S("404 → création d'un nouvel item…");
+          const newLong = await jsPOSTcreate(key);
+          $("#uri").value = newLong; // montre l'URI (longue)
+          const norm = normalize(newLong);
+          writeUri = norm.writeUri; // courte
+          S("Réessai PUT sur la nouvelle URL courte…");
+          await jsPUT(writeUri, key, body);
+          S("Enregistré ✅ (nouvel item)","ok");
+          return;
+        }
+        throw e1;
+      }
+    }catch(e){ S("Échec écriture — "+(e.message||e),"err"); }
   };
 
   $("#btnPull").onclick = async ()=>{
     CE();
-    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
+    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
     try{
       const {readUri} = normalize(u);
-      S("Lecture…");
-      const j = await jsGET(readUri, key);
+      S("Lecture (GET)…");
+      const j = await jsGET(readUri,key);
       window.data = j;
       try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_){}
       S("Chargé","ok");
     }catch(e){ S("Échec lecture — "+(e.message||e),"err"); }
   };
-
-  $("#btnPush").onclick = async ()=>{
-    CE();
-    if(location.protocol==="file:") return S("Ouvrez la page en https (GitHub Pages)","err");
-    const key = val("#apiKey"), u = val("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
-    try{
-      const {writeUri} = normalize(u); // <= ÉCRITURE SUR L'URL COURTE
-      const body = JSON.stringify(ensureData());
-      S("Écriture…");
-      await jsPUT(writeUri, key, body);
-      S("Enregistré ✅","ok");
-    }catch(e){ S("Échec écriture — "+(e.message||e),"err"); }
-  };
-
-  // Astuce : colle d'abord l'URI longue, clique "Utiliser cette URI" -> tu verras l'URL courte calculée pour l'écriture
 })();
 </script>
 </body>
