@@ -2,176 +2,163 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Neptune — JsonStorage (clé OK + écriture URL courte)</title>
+<title>Neptune — Sauvegarde centrale (JsonStorage / URI longue)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
-  .card{border:1px solid #ddd;border-radius:12px;padding:16px;max-width:960px;margin:0 auto}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
-  input[type=text]{flex:1;min-width:360px;padding:8px}
-  button{padding:8px 12px;font-size:14px}
-  .ghost{background:#f7f7f7;border:1px solid #ddd}
-  .log{white-space:pre-wrap;font-size:13px;margin-top:8px;color:#444}
-  .ok{color:#0a7d00}.err{color:#b00020}.muted{color:#666}
-  code{background:#f6f6f6;border-radius:6px;padding:2px 6px}
+  :root{
+    --bg:#f8fafc;--card:#ffffff;--muted:#667085;--ok:#0a7d00;--err:#b00020;
+    --border:#e5e7eb;--accent:#1a7f37;--shadow:0 2px 10px rgba(0,0,0,.08);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);font:14px system-ui,Segoe UI,Roboto,Arial,sans-serif;color:#111}
+  .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+  h1{font-size:20px;margin:0 0 16px}
+  .grid{display:grid;grid-template-columns:1fr;gap:16px}
+  @media(min-width:900px){.grid{grid-template-columns:1.1fr .9fr}}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:16px}
+  .card h2{margin:0 0 10px;font-size:16px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  button{padding:8px 12px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:#f7f7f7;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  code.kv{background:#f6f6f6;border-radius:6px;padding:2px 6px}
+  textarea{width:100%;height:340px;border:1px solid var(--border);border-radius:10px;padding:10px;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.4}
+  .muted{color:var(--muted)}
+  .ok{color:var(--ok)} .err{color:var(--err)}
+  .badge{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:#f9fafb;font-size:12px;color:var(--muted)}
+  .foot{margin-top:8px}
+  .bar{position:fixed;right:12px;bottom:12px;display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);padding:8px 10px;z-index:9999}
 </style>
 </head>
 <body>
-  <h1>Neptune — Sauvegarde centrale (JsonStorage)</h1>
+<div class="wrap">
+  <h1>Neptune — Sauvegarde centrale (JsonStorage / URI longue)</h1>
 
-  <div class="card">
-    <div class="row">
-      <input id="apiKey" type="text" placeholder="Clé API (Read + Modify = YES)" value="1c5f1698-c8f7-4992-988a-d1ae29cb35ee">
-      <button id="btnCreate" class="ghost" type="button">Créer un item (POST)</button>
+  <div class="grid">
+    <div class="card">
+      <h2>Éditeur de données (JSON)</h2>
+      <div class="row muted">Ces données correspondent à <code class="kv">window.data</code>. Elles sont enregistrées sur le JSON central.</div>
+      <textarea id="editor" spellcheck="false" placeholder='{ "exemple": true }'></textarea>
+      <div class="row">
+        <button id="btnFromData">↺ Recharger depuis window.data</button>
+        <button id="btnToData" class="primary">⮕ Appliquer au document</button>
+      </div>
+      <div id="editStatus" class="muted">—</div>
     </div>
 
-    <div class="row">
-      <input id="uri" type="text" placeholder="URI JsonStorage (longue ou courte). Ex: https://api.jsonstorage.net/v1/json/USER/ITEM">
-      <button id="btnUse" class="ghost" type="button">Utiliser cette URI</button>
+    <div class="card">
+      <h2>Sauvegarde JSON central</h2>
+      <div class="row">
+        <span class="badge">Clé intégrée</span>
+        <span class="badge">URI longue</span>
+      </div>
+      <div class="row muted" style="word-break:break-all">
+        URI: <code class="kv">https://api.jsonstorage.net/v1/json/88ff1334-435e-4e42-bcf4-65ee4777fa1f/caa3fc75-d869-4cc7-99fa-7fa93b38145c</code>
+      </div>
+      <div class="row">
+        <button id="btnPull" title="Lire le JSON central">← Charger</button>
+        <button id="btnPush" class="primary" title="Écrire sur le JSON central">Enregistrer →</button>
+        <button id="btnTest">Tester GET</button>
+      </div>
+      <div id="status" class="muted">—</div>
+      <div id="err" class="err" style="display:none"></div>
+      <div class="foot muted">Lecture/Écriture effectuées sur l’<b>URI longue</b> + <code class="kv">?apiKey=…</code>.</div>
     </div>
-
-    <div class="row">
-      <button id="btnTest" class="ghost" type="button">Tester GET</button>
-      <button id="btnPush" type="button">Enregistrer →</button>
-      <button id="btnPull" class="ghost" type="button">← Charger</button>
-    </div>
-
-    <div class="log muted">
-      Lecture (GET) sur : <code id="readUri">—</code><br>
-      Écriture (PUT) sur : <code id="writeUri">—</code>
-    </div>
-    <div id="status" class="log muted">—</div>
-    <div id="err" class="log err" style="display:none"></div>
   </div>
+</div>
+
+<!-- Barre flottante minimaliste -->
+<div class="bar">
+  <button id="barLoad">← Charger</button>
+  <button id="barSave" class="primary">Enregistrer →</button>
+  <span id="barStatus" class="muted">—</span>
+</div>
 
 <script>
 (function(){"use strict";
-  const $=(s)=>document.querySelector(s);
-  const S=(m,c="muted")=>{ const el=$("#status"); el.textContent=m+" ("+new Date().toLocaleTimeString()+")"; el.className="log "+c; console.log("[jsonstorage]",m); }
-  const E=(m)=>{ const el=$("#err"); el.style.display="block"; el.textContent=m; }
-  const CE=()=>{ const el=$("#err"); el.style.display="none"; el.textContent=""; }
+  // === Config figée (validée) ===
+  const API_KEY  = '1c5f1698-c8f7-4992-988a-d1ae29cb35ee';
+  const LONG_URI = 'https://api.jsonstorage.net/v1/json/88ff1334-435e-4e42-bcf4-65ee4777fa1f/caa3fc75-d869-4cc7-99fa-7fa93b38145c';
 
-  function v(id){ return ($(id).value||"").trim(); }
-  function setText(id,t){ $(id).textContent=t||"—"; }
-  function withKey(u,k){ return u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(k); }
+  // === Utils ===
+  const $ = (s)=>document.querySelector(s);
+  const at = ()=> new Date().toLocaleTimeString();
+  const withKey = (u)=> u + (u.includes("?")?"&":"?") + "apiKey=" + encodeURIComponent(API_KEY);
+  const setTxt = (id, txt, cls) => { const el=$(id); if(!el) return; el.textContent = txt + " ("+at()+")"; if(cls) el.className = cls; };
+  const showErr = (msg)=>{ const el=$("#err"); el.style.display="block"; el.textContent = msg; };
+  const hideErr = ()=>{ const el=$("#err"); el.style.display="none"; el.textContent=""; };
 
-  // Normalise l'URI : /v1/json/USER/ITEM -> read = originale (pour GET), write = /v1/json/ITEM (pour PUT)
-  function normalize(u){
-    let m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/]+)\/([^\/\?]+)(.*)?$/i);
-    if(m){ return { itemId:m[2], readUri:u, writeUri:`https://api.jsonstorage.net/v1/json/${m[2]}` }; }
-    m = u.match(/^https:\/\/api\.jsonstorage\.net\/v1\/json\/([^\/\?]+)(.*)?$/i);
-    if(m){ return { itemId:m[1], readUri:`https://api.jsonstorage.net/v1/json/${m[1]}`, writeUri:`https://api.jsonstorage.net/v1/json/${m[1]}` }; }
-    throw new Error("URI JsonStorage invalide");
+  function ensureData(){
+    try{ if(typeof window.save==="function") window.save(); }catch(_ ){}
+    if(!window.data || typeof window.data!=="object") window.data = {"notes":"", "items":[]};
+    if(!window.data.__meta) window.data.__meta = {};
+    window.data.__meta.updatedAt = new Date().toISOString();
+    return window.data;
   }
 
-  function updateUris(){
-    CE();
-    try{
-      const u=v("#uri"); const {readUri,writeUri}=normalize(u);
-      setText("#readUri", readUri);
-      setText("#writeUri", writeUri+"?apiKey=…");
-    }catch(e){ setText("#readUri","—"); setText("#writeUri","—"); }
-  }
-
-  async function jsPOSTcreate(key){
-    const url="https://api.jsonstorage.net/v1/json?apiKey="+encodeURIComponent(key);
-    const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
-    const txt = await r.text(); let j=null; try{ j=JSON.parse(txt);}catch(_){}
-    if(!r.ok) throw new Error("POST "+r.status+" — "+txt.slice(0,200));
-    if(!j || !j.uri) throw new Error("Réponse inattendue : "+txt.slice(0,200));
-    return j.uri; // souvent /v1/json/USER/ITEM
-  }
-
-  async function jsGET(uri,key){
-    const r = await fetch(withKey(uri,key), {method:"GET", cache:"no-cache", mode:"cors"});
+  async function centralGET(){
+    const r = await fetch(withKey(LONG_URI), { method:"GET", cache:"no-cache" });
     const t = await r.text();
     if(!r.ok) throw new Error("GET "+r.status+" — "+t.slice(0,200));
     return JSON.parse(t || "{}");
   }
 
-  async function jsPUT(writeUri,key,bodyStr){
-    // Seule méthode supportée partout : PUT sur l'URL COURTE + ?apiKey
-    const r = await fetch(withKey(writeUri,key), {method:"PUT", headers:{"Content-Type":"application/json"}, body: bodyStr, mode:"cors", cache:"no-store"});
+  async function centralPUT(obj){
+    const body = JSON.stringify(obj);
+    const r = await fetch(withKey(LONG_URI), {
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body,
+      cache:"no-store"
+    });
     const t = await r.text();
     if(!r.ok) throw new Error("PUT "+r.status+" — "+t.slice(0,200));
-    return t;
+    return true;
   }
 
-  function ensureData(){
-    if(typeof window.save==="function"){ try{ window.save(); }catch(e){} }
-    if(!window.data || typeof window.data!=="object") window.data={};
-    if(!window.data.__meta) window.data.__meta={};
-    window.data.__meta.updatedAt=new Date().toISOString();
-    return window.data;
+  function applyState(remote){
+    if(remote && typeof remote==="object"){
+      window.data = remote;
+      try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_ ){}
+      try{ if(typeof window.render==="function") window.render(); }catch(_ ){}
+      // maj éditeur
+      try{ $("#editor").value = JSON.stringify(window.data, null, 2); setTxt("#editStatus","Éditeur mis à jour","muted"); }catch(_ ){}
+    }
   }
 
-  // UI
-  $("#btnUse").onclick = ()=>{ updateUris(); S("URI définie — prêt"); };
-  $("#uri").addEventListener("input", updateUris);
+  // === Actions ===
+  async function actionPull(){
+    hideErr();
+    try{ setTxt("#status","Lecture…","muted"); $("#barStatus").textContent="Lecture…"; const j = await centralGET(); applyState(j); setTxt("#status","Chargé","ok"); $("#barStatus").textContent="Chargé"; }
+    catch(e){ setTxt("#status","Échec lecture — "+(e.message||e),"err"); $("#barStatus").textContent="Échec lecture"; showErr(String(e.message||e)); }
+  }
 
-  $("#btnCreate").onclick = async ()=>{
-    CE();
-    const key=v("#apiKey"); if(!key) return S("Renseigne la clé (Read + Modify = YES)","err");
-    try{
-      S("Création (POST)…");
-      const longUri = await jsPOSTcreate(key);
-      $("#uri").value = longUri;
-      updateUris();
-      S("Item créé. Teste puis Enregistrer.","ok");
-    }catch(e){ S("Échec création — "+(e.message||e),"err"); }
-  };
+  async function actionPush(){
+    hideErr();
+    if(location.protocol==="file:") return setTxt("#status","Ouvrez en HTTPS (GitHub Pages)","err");
+    try{ setTxt("#status","Préparation…","muted"); $("#barStatus").textContent="Préparation…"; const d = ensureData(); setTxt("#status","Écriture…","muted"); $("#barStatus").textContent="Écriture…"; await centralPUT(d); setTxt("#status","Enregistré ✅","ok"); $("#barStatus").textContent="Enregistré ✅"; }
+    catch(e){ setTxt("#status","Échec écriture — "+(e.message||e),"err"); $("#barStatus").textContent="Échec écriture"; showErr(String(e.message||e)); }
+  }
 
-  $("#btnTest").onclick = async ()=>{
-    CE();
-    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
-    try{
-      const {readUri} = normalize(u);
-      S("GET…"); await jsGET(readUri,key);
-      S("GET 200 OK","ok");
-    }catch(e){ S("Test GET — "+(e.message||e),"err"); }
-  };
+  // === Éditeur JSON (optionnel mais pratique) ===
+  $("#btnFromData").onclick = ()=>{ try{ $("#editor").value = JSON.stringify(ensureData(), null, 2); setTxt("#editStatus","Rechargé depuis window.data","muted"); }catch(e){ setTxt("#editStatus","Erreur rechargement — "+e,"err"); } };
+  $("#btnToData").onclick   = ()=>{ try{ const j = JSON.parse($("#editor").value||"{}"); window.data = j; setTxt("#editStatus","Appliqué à window.data","ok"); }catch(e){ setTxt("#editStatus","JSON invalide — "+e,"err"); } };
 
-  $("#btnPush").onclick = async ()=>{
-    CE();
-    if(location.protocol==="file:") return S("Ouvre en https (GitHub Pages)","err");
-    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
-    try{
-      let {writeUri} = normalize(u);
-      const body = JSON.stringify(ensureData());
-      S("PUT sur l'URL courte…");
-      try{
-        await jsPUT(writeUri, key, body);
-        S("Enregistré ✅","ok"); return;
-      }catch(e1){
-        // Si 404: l'item n'existe pas (ou appartient à une autre clé) → on crée puis on réessaye
-        if(String(e1).includes("PUT 404")){
-          S("404 → création d'un nouvel item…");
-          const newLong = await jsPOSTcreate(key);
-          $("#uri").value = newLong; // montre l'URI (longue)
-          const norm = normalize(newLong);
-          writeUri = norm.writeUri; // courte
-          S("Réessai PUT sur la nouvelle URL courte…");
-          await jsPUT(writeUri, key, body);
-          S("Enregistré ✅ (nouvel item)","ok");
-          return;
-        }
-        throw e1;
-      }
-    }catch(e){ S("Échec écriture — "+(e.message||e),"err"); }
-  };
+  // === Bind UI ===
+  $("#btnPull").onclick = actionPull;
+  $("#btnPush").onclick = actionPush;
+  $("#btnTest").onclick = async ()=>{ hideErr(); try{ const r = await fetch(withKey(LONG_URI),{method:"GET",cache:"no-cache"}); const t = await r.text(); setTxt("#status","Test "+r.status+(r.ok?" OK":" — "+t.slice(0,80)), r.ok?"ok":"err"); }catch(e){ setTxt("#status","Test — "+(e.message||e),"err"); } };
+  $("#barLoad").onclick = actionPull;
+  $("#barSave").onclick = actionPush;
 
-  $("#btnPull").onclick = async ()=>{
-    CE();
-    const key=v("#apiKey"), u=v("#uri"); if(!u||!key) return S("Renseigne URI + clé","err");
-    try{
-      const {readUri} = normalize(u);
-      S("Lecture (GET)…");
-      const j = await jsGET(readUri,key);
-      window.data = j;
-      try{ if(typeof window.refreshActivePage==="function") window.refreshActivePage(); }catch(_){}
-      S("Chargé","ok");
-    }catch(e){ S("Échec lecture — "+(e.message||e),"err"); }
-  };
+  // === Charge automatiquement au démarrage ===
+  document.addEventListener("DOMContentLoaded", async ()=>{
+    try{ const j = await centralGET(); applyState(j); setTxt("#status","Prêt (donnée distante chargée)","ok"); $("#barStatus").textContent="Prêt"; }
+    catch(_ ){ setTxt("#status","Prêt (pas de donnée distante)","muted"); $("#barStatus").textContent="Prêt"; }
+    // Si vide, initialise l'éditeur
+    if(!$("#editor").value.trim()) { $("#editor").value = JSON.stringify(ensureData(), null, 2); }
+  });
 })();
 </script>
 </body>
